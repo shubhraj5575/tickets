@@ -2,16 +2,10 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { authenticateRequest } from "@/lib/api-auth";
 import { sanitizeInput } from "@/lib/sanitize";
-import { uploadFile } from "@/lib/s3";
-
-const ALLOWED_MIME = [
-  "application/pdf",
-  "image/jpeg",
-  "image/jpg",
-  "image/png",
-  "image/webp",
-];
-const MAX_BYTES = 25 * 1024 * 1024;
+import {
+  collectAttachmentFiles,
+  uploadAttachments,
+} from "@/lib/ticket-attachments";
 
 export async function GET(request: Request) {
   const auth = await authenticateRequest(request);
@@ -65,7 +59,7 @@ export async function POST(request: Request) {
     let subjectRaw = "";
     let descriptionRaw = "";
     let priority = "";
-    let file: File | null = null;
+    let files: File[] = [];
 
     const contentType = request.headers.get("content-type") || "";
     if (contentType.includes("multipart/form-data")) {
@@ -74,8 +68,7 @@ export async function POST(request: Request) {
       subjectRaw = (form.get("subject") as string) || "";
       descriptionRaw = (form.get("description") as string) || "";
       priority = (form.get("priority") as string) || "";
-      const f = form.get("file");
-      if (f && typeof f !== "string") file = f as File;
+      files = collectAttachmentFiles(form);
     } else {
       const body = await request.json();
       category = body.category || "";
@@ -90,7 +83,8 @@ export async function POST(request: Request) {
     const subject = subjectRaw ? sanitizeInput(subjectRaw) : "";
     const description = descriptionRaw ? sanitizeInput(descriptionRaw) : "";
 
-    if (!category && !subject && !description && !file) {
+    const hasAttachments = files.length > 0;
+    if (!category && !subject && !description && !hasAttachments) {
       return NextResponse.json(
         { error: "Add a subject, description, or attachment before submitting" },
         { status: 400 }
@@ -98,34 +92,14 @@ export async function POST(request: Request) {
     }
 
     const finalCategory = category || "GENERAL";
-    const finalSubject = subject || (file ? file.name : "Untitled ticket");
-    const finalDescription = description || (file ? "(see attachment)" : "");
+    const firstFileName = hasAttachments ? files[0].name : null;
+    const finalSubject = subject || firstFileName || "Untitled ticket";
+    const finalDescription =
+      description || (hasAttachments ? "(see attachments)" : "");
 
-    let attachmentUrl: string | null = null;
-    let attachmentName: string | null = null;
-    let attachmentType: string | null = null;
-    let attachmentSize: number | null = null;
-
-    if (file) {
-      if (!ALLOWED_MIME.includes(file.type)) {
-        return NextResponse.json(
-          { error: "Only PDF and image files (jpg, png, webp) are allowed" },
-          { status: 400 }
-        );
-      }
-      if (file.size > MAX_BYTES) {
-        return NextResponse.json(
-          { error: "File too large (max 25MB)" },
-          { status: 400 }
-        );
-      }
-      const buffer = Buffer.from(await file.arrayBuffer());
-      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-      const key = `tickets/new/${Date.now()}-${safeName}`;
-      attachmentUrl = await uploadFile(key, buffer, file.type);
-      attachmentName = file.name;
-      attachmentType = file.type;
-      attachmentSize = file.size;
+    const uploadResult = await uploadAttachments(files, "tickets/new");
+    if ("error" in uploadResult) {
+      return NextResponse.json({ error: uploadResult.error }, { status: 400 });
     }
 
     const today = new Date();
@@ -152,10 +126,14 @@ export async function POST(request: Request) {
         ticketId: ticket.id,
         senderId: customer.id,
         message: finalDescription,
-        attachmentUrl,
-        attachmentName,
-        attachmentType,
-        attachmentSize,
+        attachments: {
+          create: uploadResult.map((a) => ({
+            url: a.url,
+            name: a.name,
+            type: a.type,
+            size: a.size,
+          })),
+        },
       },
     });
 

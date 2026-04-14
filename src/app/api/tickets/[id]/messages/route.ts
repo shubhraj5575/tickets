@@ -2,16 +2,10 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { authenticateRequest } from "@/lib/api-auth";
 import { sanitizeInput } from "@/lib/sanitize";
-import { uploadFile } from "@/lib/s3";
-
-const ALLOWED_MIME = [
-  "application/pdf",
-  "image/jpeg",
-  "image/jpg",
-  "image/png",
-  "image/webp",
-];
-const MAX_BYTES = 25 * 1024 * 1024;
+import {
+  collectAttachmentFiles,
+  uploadAttachments,
+} from "@/lib/ticket-attachments";
 
 export async function POST(
   request: Request,
@@ -43,51 +37,28 @@ export async function POST(
   }
 
   let message = "";
-  let file: File | null = null;
+  let files: File[] = [];
 
   const contentType = request.headers.get("content-type") || "";
   if (contentType.includes("multipart/form-data")) {
     const form = await request.formData();
     message = (form.get("message") as string) || "";
-    const f = form.get("file");
-    if (f && typeof f !== "string") file = f as File;
+    files = collectAttachmentFiles(form);
   } else {
     const body = await request.json();
     message = body.message || "";
   }
 
-  if (!message.trim() && !file) {
+  if (!message.trim() && files.length === 0) {
     return NextResponse.json(
       { error: "Message or attachment is required" },
       { status: 400 }
     );
   }
 
-  let attachmentUrl: string | null = null;
-  let attachmentName: string | null = null;
-  let attachmentType: string | null = null;
-  let attachmentSize: number | null = null;
-
-  if (file) {
-    if (!ALLOWED_MIME.includes(file.type)) {
-      return NextResponse.json(
-        { error: "Only PDF and image files (jpg, png, webp) are allowed" },
-        { status: 400 }
-      );
-    }
-    if (file.size > MAX_BYTES) {
-      return NextResponse.json(
-        { error: "File too large (max 25MB)" },
-        { status: 400 }
-      );
-    }
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-    const key = `tickets/${id}/${Date.now()}-${safeName}`;
-    attachmentUrl = await uploadFile(key, buffer, file.type);
-    attachmentName = file.name;
-    attachmentType = file.type;
-    attachmentSize = file.size;
+  const uploadResult = await uploadAttachments(files, `tickets/${id}`);
+  if ("error" in uploadResult) {
+    return NextResponse.json({ error: uploadResult.error }, { status: 400 });
   }
 
   const sanitizedMessage = message.trim() ? sanitizeInput(message) : "";
@@ -98,11 +69,16 @@ export async function POST(
       senderId: customer.id,
       message: sanitizedMessage,
       isInternal: false,
-      attachmentUrl,
-      attachmentName,
-      attachmentType,
-      attachmentSize,
+      attachments: {
+        create: uploadResult.map((a) => ({
+          url: a.url,
+          name: a.name,
+          type: a.type,
+          size: a.size,
+        })),
+      },
     },
+    include: { attachments: true },
   });
 
   await prisma.ticket.update({
@@ -114,10 +90,13 @@ export async function POST(
     {
       id: ticketMessage.id,
       message: ticketMessage.message,
-      attachmentUrl: ticketMessage.attachmentUrl,
-      attachmentName: ticketMessage.attachmentName,
-      attachmentType: ticketMessage.attachmentType,
-      attachmentSize: ticketMessage.attachmentSize,
+      attachments: ticketMessage.attachments.map((a) => ({
+        id: a.id,
+        url: a.url,
+        name: a.name,
+        type: a.type,
+        size: a.size,
+      })),
       createdAt: ticketMessage.createdAt.toISOString(),
       isCustomer: true,
     },

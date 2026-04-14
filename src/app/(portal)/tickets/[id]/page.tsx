@@ -7,7 +7,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Send, User, Headphones, Paperclip, FileText, X } from "lucide-react";
+import { ArrowLeft, Send, User, Headphones, FileText } from "lucide-react";
+import {
+  AttachmentPicker,
+  appendAttachmentsToFormData,
+} from "@/components/shared/attachment-picker";
 
 interface TicketDetail {
   id: string;
@@ -23,14 +27,19 @@ interface TicketDetail {
   messages: TicketMessage[];
 }
 
+interface TicketAttachment {
+  id: string;
+  url: string;
+  name: string;
+  type: string;
+  size: number;
+}
+
 interface TicketMessage {
   id: string;
   senderId: string;
   message: string;
-  attachmentUrl: string | null;
-  attachmentName: string | null;
-  attachmentType: string | null;
-  attachmentSize: number | null;
+  attachments: TicketAttachment[];
   createdAt: string;
   isCustomer: boolean;
 }
@@ -124,7 +133,7 @@ export default function TicketDetailPage({
   const [loading, setLoading] = useState(true);
   const [reply, setReply] = useState("");
   const [sending, setSending] = useState(false);
-  const [attachment, setAttachment] = useState<File | null>(null);
+  const [attachments, setAttachments] = useState<File[]>([]);
   const [replyError, setReplyError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -149,13 +158,13 @@ export default function TicketDetailPage({
   }
 
   async function handleSendReply() {
-    if ((!reply.trim() && !attachment) || !accessToken) return;
+    if ((!reply.trim() && attachments.length === 0) || !accessToken) return;
     setSending(true);
     setReplyError(null);
     try {
       const fd = new FormData();
       fd.append("message", reply);
-      if (attachment) fd.append("file", attachment);
+      appendAttachmentsToFormData(fd, attachments);
       const res = await fetch(`/api/tickets/${id}/messages`, {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -167,7 +176,7 @@ export default function TicketDetailPage({
           prev ? { ...prev, messages: [...prev.messages, newMsg] } : prev
         );
         setReply("");
-        setAttachment(null);
+        setAttachments([]);
       } else {
         const data = await res.json().catch(() => ({}));
         setReplyError(data.error || "Failed to send reply");
@@ -294,15 +303,16 @@ export default function TicketDetailPage({
                   {msg.message && (
                     <p className="text-sm whitespace-pre-wrap">{msg.message}</p>
                   )}
-                  {msg.attachmentUrl && (
+                  {msg.attachments.map((a) => (
                     <MessageAttachment
-                      url={msg.attachmentUrl}
-                      name={msg.attachmentName || "attachment"}
-                      type={msg.attachmentType}
-                      size={msg.attachmentSize}
+                      key={a.id}
+                      url={a.url}
+                      name={a.name}
+                      type={a.type}
+                      size={a.size}
                       invert={msg.isCustomer}
                     />
-                  )}
+                  ))}
                   <p
                     className={`text-xs mt-1 ${
                       msg.isCustomer ? "text-gray-400" : "text-gray-500"
@@ -333,44 +343,18 @@ export default function TicketDetailPage({
                 />
                 <Button
                   onClick={handleSendReply}
-                  disabled={sending || (!reply.trim() && !attachment)}
+                  disabled={sending || (!reply.trim() && attachments.length === 0)}
                   className="self-end"
                 >
                   <Send className="h-4 w-4 mr-2" />
                   {sending ? "Sending..." : "Send"}
                 </Button>
               </div>
-              {attachment ? (
-                <div className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
-                  <Paperclip className="h-4 w-4 text-gray-500" />
-                  <span className="flex-1 truncate">{attachment.name}</span>
-                  <span className="text-xs text-gray-500">
-                    {(attachment.size / 1024).toFixed(0)} KB
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setAttachment(null)}
-                    className="text-gray-500 hover:text-red-600"
-                    aria-label="Remove attachment"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-              ) : (
-                <label className="inline-flex items-center gap-2 rounded-md border border-dashed px-3 py-1.5 text-xs text-gray-600 cursor-pointer hover:border-gray-400">
-                  <Paperclip className="h-3.5 w-3.5" />
-                  <span>Attach PDF or image (max 25 MB)</span>
-                  <input
-                    type="file"
-                    accept="application/pdf,image/jpeg,image/jpg,image/png,image/webp"
-                    className="hidden"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0] || null;
-                      setAttachment(f);
-                    }}
-                  />
-                </label>
-              )}
+              <AttachmentPicker
+                files={attachments}
+                onChange={setAttachments}
+                compact
+              />
               {replyError && (
                 <p className="text-sm text-red-600">{replyError}</p>
               )}

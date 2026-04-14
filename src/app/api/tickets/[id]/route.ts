@@ -23,6 +23,7 @@ export async function GET(
       messages: {
         where: { isInternal: false },
         orderBy: { createdAt: "asc" },
+        include: { attachments: true },
       },
     },
   });
@@ -42,16 +43,31 @@ export async function GET(
     createdAt: ticket.createdAt.toISOString(),
     updatedAt: ticket.updatedAt.toISOString(),
     resolvedAt: ticket.resolvedAt?.toISOString() || null,
-    messages: ticket.messages.map((m) => ({
-      id: m.id,
-      senderId: m.senderId,
-      message: m.message,
-      attachmentUrl: m.attachmentUrl,
-      attachmentName: m.attachmentName,
-      attachmentType: m.attachmentType,
-      attachmentSize: m.attachmentSize,
-      createdAt: m.createdAt.toISOString(),
-      isCustomer: m.senderId === customer.id,
-    })),
+    messages: ticket.messages.map((m) => {
+      const attachments = m.attachments.map((a) => ({
+        id: a.id,
+        url: a.url,
+        name: a.name,
+        type: a.type,
+        size: a.size,
+      }));
+      if (attachments.length === 0 && m.attachmentUrl) {
+        attachments.push({
+          id: "legacy",
+          url: m.attachmentUrl,
+          name: m.attachmentName || "attachment",
+          type: m.attachmentType || "application/octet-stream",
+          size: m.attachmentSize || 0,
+        });
+      }
+      return {
+        id: m.id,
+        senderId: m.senderId,
+        message: m.message,
+        attachments,
+        createdAt: m.createdAt.toISOString(),
+        isCustomer: m.senderId === customer.id,
+      };
+    }),
   });
 }

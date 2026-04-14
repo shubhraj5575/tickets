@@ -31,7 +31,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, MessageSquare, Clock, Paperclip, X } from "lucide-react";
+import { Plus, MessageSquare, Clock } from "lucide-react";
+import {
+  AttachmentPicker,
+  appendAttachmentsToFormData,
+} from "@/components/shared/attachment-picker";
 
 interface Ticket {
   id: string;
@@ -83,7 +87,7 @@ export default function TicketsPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ category: "", subject: "", description: "", priority: "" });
-  const [attachment, setAttachment] = useState<File | null>(null);
+  const [attachments, setAttachments] = useState<File[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -109,7 +113,13 @@ export default function TicketsPage() {
   }
 
   async function handleCreate() {
-    if (!form.category && !form.subject.trim() && !form.description.trim() && !attachment) return;
+    if (
+      !form.category &&
+      !form.subject.trim() &&
+      !form.description.trim() &&
+      attachments.length === 0
+    )
+      return;
     setCreating(true);
     setFormError(null);
     try {
@@ -118,7 +128,7 @@ export default function TicketsPage() {
       fd.append("subject", form.subject);
       fd.append("description", form.description);
       if (form.priority) fd.append("priority", form.priority);
-      if (attachment) fd.append("file", attachment);
+      appendAttachmentsToFormData(fd, attachments);
       const res = await fetch("/api/tickets", {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -126,7 +136,7 @@ export default function TicketsPage() {
       });
       if (res.ok) {
         setForm({ category: "", subject: "", description: "", priority: "" });
-        setAttachment(null);
+        setAttachments([]);
         setDialogOpen(false);
         fetchTickets();
       } else {
@@ -220,41 +230,11 @@ export default function TicketsPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Attachment</Label>
-                <p className="text-xs text-gray-500">
-                  PDF or image (JPG, PNG, WEBP), up to 25 MB
-                </p>
-                {attachment ? (
-                  <div className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
-                    <Paperclip className="h-4 w-4 text-gray-500" />
-                    <span className="flex-1 truncate">{attachment.name}</span>
-                    <span className="text-xs text-gray-500">
-                      {(attachment.size / 1024).toFixed(0)} KB
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setAttachment(null)}
-                      className="text-gray-500 hover:text-red-600"
-                      aria-label="Remove attachment"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                ) : (
-                  <label className="flex items-center gap-2 rounded-md border border-dashed px-3 py-2 text-sm text-gray-600 cursor-pointer hover:border-gray-400">
-                    <Paperclip className="h-4 w-4" />
-                    <span>Attach a PDF or image</span>
-                    <input
-                      type="file"
-                      accept="application/pdf,image/jpeg,image/jpg,image/png,image/webp"
-                      className="hidden"
-                      onChange={(e) => {
-                        const f = e.target.files?.[0] || null;
-                        setAttachment(f);
-                      }}
-                    />
-                  </label>
-                )}
+                <Label>Attachments</Label>
+                <AttachmentPicker
+                  files={attachments}
+                  onChange={setAttachments}
+                />
               </div>
               {formError && (
                 <p className="text-sm text-red-600">{formError}</p>
@@ -266,7 +246,7 @@ export default function TicketsPage() {
                   (!form.category &&
                     !form.subject.trim() &&
                     !form.description.trim() &&
-                    !attachment)
+                    attachments.length === 0)
                 }
                 className="w-full"
               >

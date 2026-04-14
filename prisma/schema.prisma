@@ -293,6 +293,19 @@ model TicketMessage {
   attachmentType String?
   attachmentSize Int?
   createdAt      DateTime @default(now())
+
+  attachments TicketAttachment[]
+}
+
+model TicketAttachment {
+  id        String        @id @default(cuid())
+  messageId String
+  message   TicketMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  url       String
+  name      String
+  type      String
+  size      Int
+  createdAt DateTime      @default(now())
 }
 
 // ─── NOTIFICATIONS ──────────────────────────────────
