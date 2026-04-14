@@ -1,0 +1,406 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ─── AUTHENTICATION ─────────────────────────────────
+
+model User {
+  id          String    @id @default(cuid())
+  phone       String    @unique
+  email       String?
+  role        String    @default("CUSTOMER") // CUSTOMER, ADMIN, SUPER_ADMIN
+  isActive    Boolean   @default(true)
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  customer      Customer?
+  auditLogs     AdminAuditLog[]
+  sessions      Session[]
+  notifications Notification[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model OtpRequest {
+  id        String   @id @default(cuid())
+  phone     String
+  otp       String
+  expiresAt DateTime
+  verified  Boolean  @default(false)
+  attempts  Int      @default(0)
+  createdAt DateTime @default(now())
+}
+
+// ─── PROJECTS & UNITS ───────────────────────────────
+
+model Project {
+  id                 String    @id @default(cuid())
+  name               String
+  subProject         String?
+  city               String
+  state              String
+  sector             String?
+  type               String    @default("RESIDENTIAL") // RESIDENTIAL, COMMERCIAL, MIXED
+  status             String    @default("ONGOING") // UPCOMING, ONGOING, COMPLETED, POSSESSION
+  reraNumber         String?
+  launchDate         DateTime?
+  expectedCompletion DateTime?
+  description        String?
+  locationMapUrl     String?
+  layoutPlanUrl      String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  units               Unit[]
+  constructionUpdates ConstructionUpdate[]
+  cctvCameras         CctvCamera[]
+  announcements       Announcement[]
+  faqs                Faq[]
+  events              Event[]
+}
+
+model Unit {
+  id              String    @id @default(cuid())
+  projectId       String
+  project         Project   @relation(fields: [projectId], references: [id])
+  unitNumber      String
+  unitType        String    // Plot, Independent Floor, Apartment
+  floor           Int?
+  areaSqFt        Float?
+  reraAreaSqFt    Float?
+  basePricePSF    Float?
+  totalPrice      Float
+  paymentPlanType String    @default("DOWN_PAYMENT") // DOWN_PAYMENT, CONSTRUCTION_LINKED, FLEXI
+  possessionDate  DateTime?
+  status          String    @default("BOOKED") // AVAILABLE, BOOKED, ALLOTTED, POSSESSION_GIVEN, CANCELLED
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  bookings Booking[]
+
+  @@unique([projectId, unitNumber])
+}
+
+// ─── CUSTOMERS & BOOKINGS ───────────────────────────
+
+model Customer {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id])
+  title         String?
+  name          String
+  email         String?
+  phone         String
+  altPhone      String?
+  address       String?
+  city          String?
+  state         String?
+  pincode       String?
+  panNumber     String?
+  aadhaarNumber String?
+  profession    String?
+  companyName   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  bookings      Booking[]
+  documents     Document[]
+  tickets       Ticket[]
+  referrals     Referral[]
+  notifications Notification[]
+}
+
+model CoApplicant {
+  id            String   @id @default(cuid())
+  bookingId     String
+  booking       Booking  @relation(fields: [bookingId], references: [id])
+  name          String
+  phone         String?
+  email         String?
+  panNumber     String?
+  aadhaarNumber String?
+  relationship  String?
+  createdAt     DateTime @default(now())
+}
+
+model Booking {
+  id            String   @id @default(cuid())
+  bookingRef    String   @unique
+  customerId    String
+  customer      Customer @relation(fields: [customerId], references: [id])
+  unitId        String
+  unit          Unit     @relation(fields: [unitId], references: [id])
+  bookingDate   DateTime
+  totalAmount   Float
+  source        String?
+  sourceName    String?
+  status        String   @default("ACTIVE") // ACTIVE, TRANSFERRED, CANCELLED
+  importBatchId String?
+  lateFeeRatePct Float   @default(2.0) // % per month applied after 30 days overdue
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  coApplicants    CoApplicant[]
+  payments        Payment[]
+  paymentSchedule PaymentSchedule[]
+  documents       Document[]
+  possessionSteps PossessionStep[]
+}
+
+// ─── PAYMENTS ───────────────────────────────────────
+
+model PaymentSchedule {
+  id           String   @id @default(cuid())
+  bookingId    String
+  booking      Booking  @relation(fields: [bookingId], references: [id])
+  instalmentNo Int
+  label        String
+  dueDate      DateTime
+  amount       Float
+  status       String   @default("UPCOMING") // UPCOMING, PAID, OVERDUE, PARTIALLY_PAID, WAIVED
+  interestAmount   Float     @default(0)
+  escalationStage  Int       @default(0) // 0=none, 1=15d warning sent, 2=30d interest applied
+  reminderStage    Int       @default(0) // 0=none, 1=7d-before sent, 2=3d-before sent
+  lastEscalationAt DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  payment Payment?
+
+  @@unique([bookingId, instalmentNo])
+}
+
+model Payment {
+  id              String           @id @default(cuid())
+  bookingId       String
+  booking         Booking          @relation(fields: [bookingId], references: [id])
+  scheduleId      String?          @unique
+  schedule        PaymentSchedule? @relation(fields: [scheduleId], references: [id])
+  amount          Float
+  paymentDate     DateTime
+  paymentMode     String?
+  referenceNumber String?
+  receiptUrl      String?
+  remarks         String?
+  markedBy        String?
+  createdAt       DateTime         @default(now())
+}
+
+// ─── CONSTRUCTION PROGRESS ──────────────────────────
+
+model ConstructionUpdate {
+  id           String   @id @default(cuid())
+  projectId    String
+  project      Project  @relation(fields: [projectId], references: [id])
+  title        String
+  description  String?
+  stage        String   // FOUNDATION, STRUCTURE, BRICKWORK, PLASTERING, FINISHING, EXTERNAL_DEVELOPMENT, HANDOVER_READY
+  date         DateTime
+  mediaType    String   // PHOTO, VIDEO, DRONE, CCTV_SNAPSHOT
+  mediaUrl     String
+  thumbnailUrl String?
+  source       String   @default("MANUAL") // MANUAL, CCTV
+  createdAt    DateTime @default(now())
+}
+
+model CctvCamera {
+  id               String    @id @default(cuid())
+  projectId        String
+  project          Project   @relation(fields: [projectId], references: [id])
+  label            String
+  streamUrl        String
+  isActive         Boolean   @default(true)
+  snapshotInterval Int       @default(3600)
+  lastSnapshotAt   DateTime?
+  createdAt        DateTime  @default(now())
+}
+
+// ─── DOCUMENTS ──────────────────────────────────────
+
+model Document {
+  id         String   @id @default(cuid())
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id])
+  bookingId  String?
+  booking    Booking?  @relation(fields: [bookingId], references: [id])
+  type       String   // BOOKING_FORM, ALLOTMENT_LETTER, PAYMENT_RECEIPT, etc.
+  title      String
+  fileUrl    String
+  fileSize   Int?
+  mimeType   String?
+  uploadedBy String   // ADMIN, CUSTOMER, SYSTEM
+  isNotified Boolean  @default(false)
+  createdAt  DateTime @default(now())
+}
+
+// ─── PDF IMPORT ─────────────────────────────────────
+
+model ImportBatch {
+  id            String   @id @default(cuid())
+  fileName      String
+  fileUrl       String
+  status        String   @default("PROCESSING") // PROCESSING, PENDING_REVIEW, VERIFIED, IMPORTED, FAILED
+  extractedData String?  // JSON string
+  verifiedData  String?  // JSON string
+  errorMessage  String?
+  processedBy   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// ─── TICKETS (Phase 2) ─────────────────────────────
+
+model Ticket {
+  id          String    @id @default(cuid())
+  ticketRef   String    @unique
+  customerId  String
+  customer    Customer  @relation(fields: [customerId], references: [id])
+  category    String    // PAYMENT_DISPUTE, NAME_CHANGE, ADDRESS_UPDATE, CONSTRUCTION_QUERY, DOCUMENT_REQUEST, GENERAL
+  subject     String
+  description String
+  status      String    @default("OPEN") // OPEN, IN_PROGRESS, RESOLVED, CLOSED
+  priority    String    @default("MEDIUM") // LOW, MEDIUM, HIGH, URGENT
+  assignedTo  String?
+  resolvedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  messages TicketMessage[]
+}
+
+model TicketMessage {
+  id         String   @id @default(cuid())
+  ticketId   String
+  ticket     Ticket   @relation(fields: [ticketId], references: [id])
+  senderId   String
+  message    String
+  isInternal Boolean  @default(false)
+  createdAt  DateTime @default(now())
+}
+
+// ─── NOTIFICATIONS ──────────────────────────────────
+
+model Notification {
+  id         String    @id @default(cuid())
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id])
+  userId     String?
+  user       User?     @relation(fields: [userId], references: [id])
+  type       String    // PAYMENT_REMINDER, PAYMENT_OVERDUE, PAYMENT_LATE_FEE, PAYMENT_CONFIRMATION, CONSTRUCTION_UPDATE, DOCUMENT_ADDED, TICKET_UPDATE, ANNOUNCEMENT, ADMIN_ALERT
+  title      String
+  body       String
+  channels   String    @default("IN_APP") // comma-separated: IN_APP,SMS,EMAIL,WHATSAPP,PUSH
+  isRead     Boolean   @default(false)
+  sentAt     DateTime?
+  createdAt  DateTime  @default(now())
+}
+
+// ─── REFERRALS (Phase 3) ────────────────────────────
+
+model Referral {
+  id           String    @id @default(cuid())
+  referrerId   String
+  referrer     Customer  @relation(fields: [referrerId], references: [id])
+  referralCode String    @unique
+  refereeName  String
+  refereePhone String
+  status       String    @default("LEAD") // LEAD, SITE_VISIT, BOOKING, REWARD_PENDING, REWARD_PAID
+  rewardAmount Float?
+  rewardPaidAt DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+// ─── POSSESSION (Phase 3) ───────────────────────────
+
+model PossessionStep {
+  id            String    @id @default(cuid())
+  bookingId     String
+  booking       Booking   @relation(fields: [bookingId], references: [id])
+  stepNumber    Int
+  title         String    // e.g. "Structure Complete", "OC Applied"
+  status        String    @default("UPCOMING") // UPCOMING, IN_PROGRESS, DONE
+  estimatedDate DateTime?
+  completedDate DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([bookingId, stepNumber])
+}
+
+// ─── COMMUNITY (Phase 3) ────────────────────────────
+
+model Announcement {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id])
+  title     String
+  body      String
+  imageUrl  String?
+  createdAt DateTime @default(now())
+}
+
+model Faq {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id])
+  question  String
+  answer    String
+  category  String?
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+}
+
+model Event {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id])
+  title       String
+  description String?
+  eventDate   DateTime
+  location    String?
+  imageUrl    String?
+  createdAt   DateTime @default(now())
+}
+
+// ─── LOAN ASSISTANCE (Phase 3) ──────────────────────
+
+model PartnerBank {
+  id               String  @id @default(cuid())
+  bankName         String
+  interestRate     Float
+  maxLoanAmount    Float?
+  processingFee    String?
+  contactPerson    String?
+  contactPhone     String?
+  contactEmail     String?
+  documentChecklist String? // JSON string of required docs
+  isActive         Boolean @default(true)
+  createdAt        DateTime @default(now())
+}
+
+// ─── AUDIT ──────────────────────────────────────────
+
+model AdminAuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  action    String
+  entity    String
+  entityId  String
+  details   String?  // JSON string
+  createdAt DateTime @default(now())
+}
